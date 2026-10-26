@@ -5,10 +5,12 @@ description = "Local RAG chat over university lecture slides"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "langchain",
+    "langchain-text-splitters",
     "langchain-ollama",
     "langgraph",
     "chromadb",
     "pymupdf4llm",
+    "pymupdf",
     "scikit-learn",
     "umap-learn",
     "ddgs",
