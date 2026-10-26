@@ -1,0 +1,92 @@
+import pytest
+
+from studybuddy.graph.build import GraphDeps, build_graph
+
+
+def _deps(**over):
+    d = dict(
+        retrieve=lambda q, k: [
+            {"text": "X is Y", "source": "a.pdf", "page": 3, "score": 0.9}
+        ],
+        answer_llm=lambda p: "X is Y [a.pdf p.3]",
+        judge=lambda p: True,
+        rewrite=lambda q, h: q,
+        step_back=lambda q: q,
+        web_search=lambda q: [{"title": "t", "url": "u", "text": "web says Z"}],
+        k=8,
+        threshold=0.35,
+    )
+    d.update(over)
+    return GraphDeps(**d)
+
+
+def test_relevant_question_answers_from_slides():
+    out = build_graph(_deps()).invoke(
+        {"question": "what is X?", "history": [], "attempts": 0}
+    )
+    assert out["source"] == "slides" and "a.pdf p.3" in out["answer"]
+
+
+def test_weak_retrieval_goes_to_web_with_label():
+    d = _deps(
+        retrieve=lambda q, k: [
+            {"text": "x", "source": "a.pdf", "page": 1, "score": 0.1}
+        ],
+        answer_llm=lambda p: ("web says Z" if "WEB" in p else "slide answer"),
+    )
+    out = build_graph(d).invoke({"question": "q", "history": [], "attempts": 0})
+    assert out["source"] == "web"
+
+
+def test_failed_hallucination_check_regenerates_once_then_web():
+    def judge(p):
+        return False if "supported" in p.lower() else True
+
+    out = build_graph(
+        _deps(judge=judge, answer_llm=lambda p: "unsupported claim")
+    ).invoke({"question": "q", "history": [], "attempts": 0})
+    assert out["source"] == "web"
+
+
+def test_follow_up_is_rewritten_before_retrieval():
+    seen = {}
+    def retrieve(q, k):
+        seen["q"] = q
+        return [{"text": "X is Y", "source": "a.pdf", "page": 3, "score": 0.9}]
+
+    build_graph(
+        _deps(retrieve=retrieve, rewrite=lambda q, h: "what is X and why does it hold?")
+    ).invoke(
+        {"question": "why?", "history": [{"role": "user", "content": "what is X?"}], "attempts": 0}
+    )
+    assert seen["q"] == "what is X and why does it hold?"
+
+
+def test_step_back_retrieves_both_queries_and_merges():
+    seen = []
+    def retrieve(q, k):
+        seen.append(q)
+        return [{"text": "ctx for " + q, "source": "a.pdf", "page": 1, "score": 0.9}]
+
+    out = build_graph(
+        _deps(retrieve=retrieve, step_back=lambda q: "general: " + q)
+    ).invoke({"question": "q", "history": [], "attempts": 0})
+    assert seen == ["q", "general: q"]
+    assert out["source"] == "slides"
+
+
+def test_step_back_failure_does_not_block_answer():
+    def boom(q):
+        raise RuntimeError("timeout")
+
+    out = build_graph(_deps(step_back=boom)).invoke(
+        {"question": "q", "history": [], "attempts": 0}
+    )
+    assert out["source"] == "slides"
+
+
+def test_both_paths_fail_gives_labelled_refusal():
+    d = _deps(retrieve=lambda q, k: [], web_search=lambda q: [])
+    out = build_graph(d).invoke({"question": "q", "history": [], "attempts": 0})
+    assert out["source"] == "refused"
+    assert out["answer"]
