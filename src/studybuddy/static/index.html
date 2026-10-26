@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>StudyBuddy</title>
+<style>
+  :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+  body { margin: 0; display: flex; flex-direction: column; height: 100vh; }
+  header { padding: .6rem 1rem; border-bottom: 1px solid #8884; font-size: .85rem; display: flex; gap: 1rem; align-items: center; }
+  #status { opacity: .75; flex: 1; }
+  #log { flex: 1; overflow-y: auto; padding: 1rem; display: flex; flex-direction: column; gap: .8rem; }
+  .msg { max-width: 60rem; padding: .7rem .9rem; border-radius: .5rem; white-space: pre-wrap; }
+  .user { align-self: flex-end; background: #3b82f6; color: #fff; }
+  .bot { align-self: flex-start; background: #8882; }
+  .web { border-left: 4px solid #d97706; }
+  .bad { border-left: 4px solid #dc2626; }
+  .sources { font-size: .8rem; opacity: .8; margin-top: .4rem; }
+  form { display: flex; gap: .5rem; padding: 1rem; border-top: 1px solid #8884; }
+  textarea { flex: 1; resize: none; height: 3rem; padding: .5rem; font: inherit; }
+  button { padding: 0 1.2rem; font: inherit; cursor: pointer; }
+</style>
+</head>
+<body>
+<header>
+  <strong>StudyBuddy</strong>
+  <span id="status">loading…</span>
+  <button id="reindex" type="button">Reindex</button>
+</header>
+<div id="log"></div>
+<form id="form">
+  <textarea id="input" placeholder="Ask about your slides…" autofocus></textarea>
+  <button type="submit">Send</button>
+</form>
+<script>
+const log = document.getElementById('log');
+const input = document.getElementById('input');
+const statusEl = document.getElementById('status');
+const HISTORY_KEY = 'studybuddy_history';
+
+const history = () => JSON.parse(sessionStorage.getItem(HISTORY_KEY) || '[]');
+const remember = (role, content) => {
+  const next = [...history(), { role, content }].slice(-12);
+  sessionStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+};
+
+function bubble(text, cls) {
+  const div = document.createElement('div');
+  div.className = `msg ${cls}`;
+  div.textContent = text;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+  return div;
+}
+
+async function refreshStatus() {
+  try {
+    const s = await (await fetch('/status')).json();
+    const decks = s.decks?.length ?? 0;
+    statusEl.textContent = s.state === 'building'
+      ? 'rebuilding index…'
+      : `${decks} deck${decks === 1 ? '' : 's'} indexed · ${s.chunks ?? 0} chunks`;
+  } catch {
+    statusEl.textContent = 'server not reachable';
+  }
+}
+
+document.getElementById('reindex').addEventListener('click', async () => {
+  await fetch('/reindex', { method: 'POST' });
+  refreshStatus();
+});
+
+document.getElementById('form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const message = input.value.trim();
+  if (!message) return;
+  input.value = '';
+  bubble(message, 'user');
+
+  const res = await fetch('/chat', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ message, history: history(), session_id: 'local' }),
+  });
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let node = null;
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop();
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const event = JSON.parse(line);
+      if (event.type === 'answer') {
+        node = bubble(event.text, event.source === 'web' ? 'bot web' : 'bot');
+      } else if (event.type === 'sources' && node) {
+        const div = document.createElement('div');
+        div.className = 'sources';
+        div.textContent = 'Sources: ' + event.items.map((s) => `${s.deck} p.${s.page}`).join(', ');
+        node.appendChild(div);
+      } else if (event.type === 'notice' && node) {
+        const div = document.createElement('div');
+        div.className = 'sources';
+        div.textContent = event.text;
+        node.appendChild(div);
+      } else if (event.type === 'error') {
+        bubble(event.message, 'bot bad');
+      } else if (event.type === 'done') {
+        remember('user', message);
+        if (node) remember('assistant', node.textContent);
+        refreshStatus();
+      }
+    }
+  }
+});
+
+refreshStatus();
+setInterval(refreshStatus, 5000);
+</script>
+</body>
+</html>
