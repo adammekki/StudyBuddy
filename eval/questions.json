@@ -1,0 +1,17 @@
+{
+  "questions": [
+    {
+      "id": "out-of-scope",
+      "question": "Who won the 2018 football world cup?",
+      "expect": "web answer, labelled From the web",
+      "kind": "web"
+    },
+    {
+      "id": "unanswerable",
+      "question": "What does lecture 12 say about topic X?",
+      "expect": "refusal or web answer, never a slide citation for something absent",
+      "kind": "refusal"
+    }
+  ],
+  "note": "Add ~10 questions drafted from the indexed decks with expected answer points, then correct them by hand."
+}
