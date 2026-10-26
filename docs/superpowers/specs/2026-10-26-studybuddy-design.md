@@ -33,7 +33,7 @@ The author just learned to build a RAG pipeline end to end with LangChain and wa
 - Problem sets, past exams, handwritten notes, textbooks, or video lectures (v1 is slides only).
 - CMS scraping or syncing.
 - Multi-user hosting, accounts, quotas.
-- OCR for scanned PDFs.
+- OCR of scanned PDFs. Vision captions read text inside figures; a scanned page with no text layer still depends on captions being good enough.
 - Mobile app.
 - Cloud model APIs.
 
@@ -90,6 +90,8 @@ browser chat  ──POST /chat──>  LangGraph adaptive graph
 - Change detection: a JSON manifest (`data/manifest.json`) holds sha256 per file. If every hash matches the manifest, nothing happens. Any add, remove, or change triggers one full rebuild.
 - A file is ingested only after its size and mtime stay unchanged across two consecutive polls, so a half-copied PDF is not indexed. A file that fails extraction three times is quarantined until its hash changes; otherwise it would rebuild on every poll.
 - Extraction: `pymupdf4llm`, preserving page numbers as metadata.
+- Visuals: a page counts as visual when it holds a raster image of at least 200x150 px, or 15+ vector drawings with under 1200 characters of text. Vector drawings matter because the diagrams are TikZ, not embeddable images.
+- Captions: each visual page is rendered to PNG at 120 DPI and described once by `gemma4:e4b` vision. Only diagrams, chart labels and legends are described, capped at 400 characters. The caption is appended to the page text as `[Visuals: ...]` before chunking, so it embeds and retrieves like slide text. Cached under `data/captions/<file-sha>/<page>.txt`, so an unchanged deck costs nothing.
 - Chunking: `RecursiveCharacterTextSplitter`, 800 characters, 100 overlap. Skip chunks under 40 characters (slide furniture, page numbers).
 - A single PDF failing must not abort the whole ingest; log it and report it in `/status`.
 - Rebuilds are atomic: build into a new Chroma collection (`studybuddy_v<N>`), then swap the active collection pointer and update the manifest. Chat keeps serving the old index until the swap. A failed rebuild leaves the old index live and reports the error.
@@ -120,7 +122,7 @@ If `step_back` fails or returns the same question, continue with the standalone 
 
 Loop caps: one regeneration, one web attempt. No unbounded cycles.
 
-No answer is streamed token by token. The generated answer is buffered, both judges run, and only a passing answer is emitted. A rejected answer is never shown. This keeps the trust promise and keeps the graph acyclic in its visible output: one turn produces exactly one answer.
+Answers stream token by token (`token` events) so the user sees progress instead of a 20-30 s blank. The judges still run after generation. If a judge rejects the answer, the server emits `reset`, the browser clears the live bubble, and the retry or the web answer replaces it. A rejected answer is never left on screen. The final `answer` event carries the complete text so the browser can reconcile what it streamed.
 
 If both the slide path and web search fail, the reply is: "Your slides do not cover this, and web search failed." plus the search error, as a notice. No unlabelled answer is produced.
 
@@ -128,7 +130,7 @@ Out-of-scope questions go straight to web, so `route_scope` must be conservative
 
 ### API and UI
 
-- `POST /chat` — body `{message, history, session_id}` where `history` is the last 6 turns as `[{role, content}]` provided by the browser. No server-side session state. Response is newline-delimited JSON events: `{type: "answer", text, source}`, `{type: "sources", items}`, `{type: "notice", text}`, `{type: "error", message}`, `{type: "done"}`. `source` is `"slides"` or `"web"`. `error` is terminal. Only the answer text is delayed; sources arrive with it.
+- `POST /chat` — body `{message, history, session_id}` where `history` is the last 6 turns as `[{role, content}]` provided by the browser. No server-side session state. Response is newline-delimited JSON events: `{type: "token", text}` while generating, `{type: "reset"}` when a streamed answer is withdrawn, `{type: "answer", text, source}`, `{type: "sources", items}`, `{type: "notice", text}`, `{type: "error", message}`, `{type: "done"}`. `source` is `"slides"` or `"web"`. `error` is terminal. Only the answer text is delayed; sources arrive with it.
 - `GET /status` — indexed decks, chunk count, tree depth, index state (`idle`/`building`), progress, last error per file, model names, active collection.
 - `POST /reindex` — starts a rebuild and returns 202 immediately with the current state; the browser polls `/status`.
 - Static `index.html` plus vanilla JS: chat log, message input, sources under each answer, a banner for web answers, a status strip, and a "rebuilding" indicator. No build step, no framework.

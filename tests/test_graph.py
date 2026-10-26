@@ -1,6 +1,6 @@
 import pytest
 
-from studybuddy.graph.build import GraphDeps, build_graph
+from studybuddy.graph.build import GraphDeps, build_graph, emit_to
 
 
 def _deps(**over):
@@ -106,6 +106,17 @@ def test_web_answer_is_labelled_and_carries_no_slide_text():
 def test_score_just_below_threshold_goes_to_web():
     d = _deps(retrieve=lambda q, k: [{"text": "x", "source": "a.pdf", "page": 1, "score": 0.349}])
     assert build_graph(d).invoke({"question": "q", "history": [], "attempts": 0})["source"] == "web"
+
+
+def test_answer_llm_only_emits_one_token_event():
+    events = []
+    with emit_to(events.append):
+        out = build_graph(_deps()).invoke(
+            {"question": "q", "history": [], "attempts": 0}
+        )
+    assert events == [{"type": "token", "text": "X is Y [a.pdf p.3]"}]
+    assert out["answer"] == "X is Y [a.pdf p.3]"
+    assert out["source"] == "slides"
 
 
 def test_regeneration_happens_exactly_once():

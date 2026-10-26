@@ -20,7 +20,7 @@ def test_unchanged_hashes_skip_rebuild(tmp_path):
     (tmp_path / "a.pdf").write_bytes(b"slides")
     files, m = plan_rebuild(tmp_path, {"collection": None, "files": {}})
     assert [f.name for f in files] == ["a.pdf"]
-    again, _ = plan_rebuild(tmp_path, {"collection": "studybuddy_v1", "files": m["files"]})
+    again, _ = plan_rebuild(tmp_path, {"collection": "studybuddy_v1", "version": m["version"], "files": m["files"]})
     assert again == []
 
 
@@ -30,3 +30,13 @@ def test_names_filter_selects_only_named_files(tmp_path):
     files, manifest = plan_rebuild(tmp_path, {"collection": None, "files": {}}, names={"a.pdf"})
     assert [f.name for f in files] == ["a.pdf"]
     assert "b.pdf" in manifest["files"]
+
+
+def test_version_change_forces_rebuild(tmp_path):
+    from studybuddy.ingest import INDEX_VERSION
+
+    (tmp_path / "a.pdf").write_bytes(b"slides")
+    files, manifest = plan_rebuild(tmp_path, {"collection": "studybuddy_v1", "version": INDEX_VERSION, "files": {}})
+    assert [f.name for f in files] == ["a.pdf"]
+    stale, _ = plan_rebuild(tmp_path, {"collection": "studybuddy_v1", "version": INDEX_VERSION - 1, "files": manifest["files"]})
+    assert [f.name for f in stale] == ["a.pdf"]

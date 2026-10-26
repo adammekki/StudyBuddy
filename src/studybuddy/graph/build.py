@@ -1,5 +1,7 @@
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Iterator
 
 from langgraph.graph import END, StateGraph
 
@@ -83,6 +85,39 @@ class GraphDeps:
     web_search: Callable[[str], list[dict]]
     k: int = 8
     threshold: float = 0.35
+    answer_stream: Callable[[str], Iterator[str]] | None = None
+
+
+_EVENTS: ContextVar[Callable[[dict], None] | None] = ContextVar(
+    "studybuddy_events", default=None
+)
+
+
+@contextmanager
+def emit_to(sink: Callable[[dict], None]):
+    """Send progress events from the graph nodes to ``sink``."""
+    token = _EVENTS.set(sink)
+    try:
+        yield
+    finally:
+        _EVENTS.reset(token)
+
+
+def _emit(event: dict) -> None:
+    sink = _EVENTS.get()
+    if sink is not None:
+        sink(event)
+
+
+def _answer_text(d: GraphDeps, prompt: str) -> str:
+    chunks = d.answer_stream(prompt) if d.answer_stream else [d.answer_llm(prompt)]
+    parts: list[str] = []
+    for piece in chunks:
+        if not piece:
+            continue
+        parts.append(piece)
+        _emit({"type": "token", "text": piece})
+    return "".join(parts).strip()
 
 
 def _history_text(history: list[dict]) -> str:
@@ -124,17 +159,22 @@ def build_graph(d: GraphDeps):
             base = REGEN_PROMPT.format(
                 base=base, problem=state.get("notices", ["unsupported claims"])[-1]
             )
-        return {"answer": d.answer_llm(base).strip(), "source": "slides"}
+        return {"answer": _answer_text(d, base), "source": "slides"}
 
     def web(state: ChatState) -> dict:
+        if state.get("answer"):
+            _emit({"type": "reset"})  # the slide answer this one replaces
         results = d.web_search(state["standalone"])
         if not results:
             return {"answer": REFUSAL, "source": "refused"}
         text = "\n\n".join(
             f"{r['title']} ({r['url']})\n{r['text']}" for r in results
         )
-        answer = d.answer_llm(WEB_PROMPT.format(results=text, question=state["question"]))
-        return {"answer": f"{WEB_LABEL}:\n{answer.strip()}", "source": "web"}
+        _emit({"type": "token", "text": f"{WEB_LABEL}:\n"})
+        answer = _answer_text(
+            d, WEB_PROMPT.format(results=text, question=state["question"])
+        )
+        return {"answer": f"{WEB_LABEL}:\n{answer}", "source": "web"}
 
     def after_retrieve(state: ChatState) -> str:
         return "generate" if is_relevant(state["chunks"], d.threshold) else "web"
@@ -153,11 +193,15 @@ def build_graph(d: GraphDeps):
         )
         return "ok" if adequate else "web"
 
+    def regenerate(state: ChatState) -> dict:
+        _emit({"type": "reset"})  # the rejected answer must not stay on screen
+        return {"attempts": state.get("attempts", 0) + 1}
+
     graph.add_node("rewrite", rewrite)
     graph.add_node("step_back", step_back)
     graph.add_node("retrieve", retrieve)
     graph.add_node("generate", generate)
-    graph.add_node("regenerate", lambda s: {"attempts": s.get("attempts", 0) + 1})
+    graph.add_node("regenerate", regenerate)
     graph.add_node("web", web)
 
     graph.set_entry_point("rewrite")

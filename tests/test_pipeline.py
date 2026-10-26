@@ -79,3 +79,60 @@ def test_adding_one_deck_keeps_the_others(tmp_path):
     make_pdf(rag / "c.pdf", "gamma lecture material " * 5)
     second = rebuild(settings, FakeDeps(), names={"c.pdf"})
     assert second["decks"] == 3
+
+
+def test_visual_caption_is_indexed_into_the_chunk(tmp_path):
+    import pymupdf
+    from studybuddy.store import Store
+
+    rag = tmp_path / "RAG"
+    rag.mkdir()
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), "A slide with one picture " * 4)
+    pix = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 300, 200), 0)
+    pix.set_rect(pix.irect, (10, 90, 160))
+    page.insert_image(pymupdf.Rect(100, 150, 400, 350), pixmap=pix)
+    doc.save(rag / "visual.pdf")
+    doc.close()
+
+    settings = Settings(
+        rag_dir=rag,
+        data_dir=tmp_path / "data",
+        gen_model="g",
+        judge_model="j",
+        embed_model="e",
+        k=8,
+        threshold=0.35,
+        chunk_size=800,
+        chunk_overlap=100,
+    )
+
+    class CaptionDeps(FakeDeps):
+        caption = staticmethod(lambda png: "a green block diagram of the process")
+
+    rebuild(settings, CaptionDeps())
+    store = Store(settings.data_dir / "chroma", FakeEmbed())
+    hits = store.search("green block diagram", 5)
+    assert any("[Visuals: a green block diagram" in h["text"] for h in hits)
+
+
+def test_build_lock_is_released_after_a_failed_rebuild(tmp_path):
+    from studybuddy.pipeline import build_lock
+
+    settings = Settings(
+        rag_dir=tmp_path / "RAG",
+        data_dir=tmp_path / "data",
+        gen_model="g",
+        judge_model="j",
+        embed_model="e",
+        k=8,
+        threshold=0.35,
+        chunk_size=800,
+        chunk_overlap=100,
+    )
+    settings.rag_dir.mkdir()
+    with build_lock(settings):
+        pass
+    with build_lock(settings):
+        pass

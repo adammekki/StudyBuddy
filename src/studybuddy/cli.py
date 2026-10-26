@@ -54,6 +54,9 @@ def make_graph(settings, deps):
             web_search=web_search,
             k=settings.k,
             threshold=settings.threshold,
+            answer_stream=lambda prompt: (
+                chunk.content for chunk in deps.llm.stream(prompt)
+            ),
         )
     )
 

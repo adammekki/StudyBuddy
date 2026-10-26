@@ -1,5 +1,8 @@
+import fcntl
+from contextlib import contextmanager
 from pathlib import Path
 
+from studybuddy.captions import caption_pages
 from studybuddy.chunking import extract_pages, make_chunks
 from studybuddy.config import Settings
 from studybuddy.ingest import (
@@ -21,6 +24,24 @@ def _manifest_path(settings: Settings) -> Path:
 
 
 def rebuild(settings: Settings, deps, names: set[str] | None = None) -> dict:
+    with build_lock(settings):
+        return _rebuild(settings, deps, names)
+
+
+@contextmanager
+def build_lock(settings: Settings):
+    """Cross-process lock: the server watcher and a terminal `index` must not build at once."""
+    settings.data_dir.mkdir(parents=True, exist_ok=True)
+    handle = open(settings.data_dir / "rebuild.lock", "w")
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(handle, fcntl.LOCK_UN)
+        handle.close()
+
+
+def _rebuild(settings: Settings, deps, names: set[str] | None = None) -> dict:
     manifest = load_manifest(_manifest_path(settings))
     trigger, manifest = plan_rebuild(settings.rag_dir, manifest, names)
     indexable = [
@@ -51,6 +72,24 @@ def rebuild(settings: Settings, deps, names: set[str] | None = None) -> dict:
     for path in indexable:
         try:
             pages = extract_pages(path)
+            captioner = getattr(deps, "caption", None)
+            if captioner:
+                sha = manifest.get("files", {}).get(path.name, {}).get("sha", path.name)
+                captions = caption_pages(
+                    path, sha, settings.data_dir / "captions", captioner
+                )
+                pages = [
+                    (
+                        number,
+                        text
+                        + (
+                            f"\n\n[Visuals: {captions[number]}]"
+                            if captions.get(number)
+                            else ""
+                        ),
+                    )
+                    for number, text in pages
+                ]
             file_chunks = make_chunks(
                 pages,
                 path.name,

@@ -1,4 +1,6 @@
 import json
+import queue
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -6,6 +8,8 @@ from typing import Callable
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
+
+from studybuddy.graph.build import emit_to
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -64,20 +68,33 @@ def create_app(state: AppState) -> FastAPI:
     @app.post("/chat")
     def chat(payload: ChatRequest) -> StreamingResponse:
         def stream():
-            try:
-                result = state.run(payload.message, payload.history)
-            except Exception as error:  # surface, never a bare traceback
-                yield _event({"type": "error", "message": str(error)})
-                yield _event({"type": "done"})
-                return
+            events: queue.Queue[dict | None] = queue.Queue()
+            result: dict = {}
 
-            if result.get("error"):
-                yield _event({"type": "error", "message": result["error"]})
-                yield _event({"type": "done"})
-                return
+            def work() -> None:
+                # same thread as state.run, so graph nodes see the sink
+                with emit_to(events.put):
+                    try:
+                        result.update(state.run(payload.message, payload.history))
+                    except Exception as error:  # surface, never a bare traceback
+                        result.update({"error": str(error)})
+                events.put(None)
 
-            if result.get("source") == "refused":
-                yield _event({"type": "error", "message": result.get("answer", "")})
+            threading.Thread(target=work, daemon=True).start()
+            streamed = False
+            for event in iter(events.get, None):
+                streamed = streamed or event["type"] == "token"
+                yield _event(event)
+
+            if result.get("error") or result.get("source") == "refused":
+                if streamed:
+                    yield _event({"type": "reset"})
+                message = (
+                    result.get("answer", "")
+                    if result.get("source") == "refused"
+                    else result["error"]
+                )
+                yield _event({"type": "error", "message": message})
                 yield _event({"type": "done"})
                 return
 

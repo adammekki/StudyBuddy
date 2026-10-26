@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 
 MAX_FAILURES = 3
+INDEX_VERSION = 2  # bump when chunk text or metadata format changes
 
 
 def snapshot(folder: Path) -> dict[str, tuple[int, float]]:
@@ -49,9 +50,12 @@ def plan_rebuild(
     removed = set(manifest.get("files", {})) - set(files)
     if removed or manifest.get("collection") is None:
         changed = True
+    if manifest.get("version") != INDEX_VERSION:
+        changed = True
 
     next_manifest = dict(manifest)
     next_manifest["files"] = files
+    next_manifest["version"] = INDEX_VERSION
     if not changed:
         return [], next_manifest
     return [p for p in selected if not files[p.name].get("quarantined")], next_manifest

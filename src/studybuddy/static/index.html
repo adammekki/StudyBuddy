@@ -112,6 +112,7 @@ function turn(role, text, cls) {
   const body = document.createElement('div');
   body.textContent = text;
   wrapper.appendChild(body);
+  wrapper.body = body;
   log.appendChild(wrapper);
   log.scrollTop = log.scrollHeight;
   return wrapper;
@@ -182,7 +183,13 @@ document.getElementById('form').addEventListener('submit', async (event) => {
   log.scrollTop = log.scrollHeight;
 
   let answerNode = null;
+  let live = null;
   let sawDone = false;
+
+  const liveTurn = () => {
+    if (!live) live = turn('bot', '');
+    return live;
+  };
 
   try {
     const res = await fetch('/chat', {
@@ -204,9 +211,26 @@ document.getElementById('form').addEventListener('submit', async (event) => {
       for (const line of lines) {
         if (!line.trim()) continue;
         const event = JSON.parse(line);
-        if (event.type === 'answer') {
+        if (event.type === 'token') {
           pending.remove();
-          answerNode = turn('bot', event.text, event.source === 'web' ? 'web' : '');
+          const node = liveTurn();
+          node.body.textContent += event.text;
+          log.scrollTop = log.scrollHeight;
+        } else if (event.type === 'reset') {
+          if (live) {
+            live.remove();
+            live = null;
+          }
+        } else if (event.type === 'answer') {
+          pending.remove();
+          const node = live || turn('bot', '');
+          live = null;
+          node.body.textContent = event.text;
+          if (event.source === 'web') {
+            node.classList.add('web');
+            node.querySelector('.who').textContent = 'from the web';
+          }
+          answerNode = node;
         } else if (event.type === 'sources' && answerNode) {
           footnote(answerNode, event.items.map((s) => ({
             text: `${s.deck} p.${s.page}`,
