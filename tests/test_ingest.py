@@ -22,3 +22,11 @@ def test_unchanged_hashes_skip_rebuild(tmp_path):
     assert [f.name for f in files] == ["a.pdf"]
     again, _ = plan_rebuild(tmp_path, {"collection": "studybuddy_v1", "files": m["files"]})
     assert again == []
+
+
+def test_names_filter_selects_only_named_files(tmp_path):
+    for name in ("a.pdf", "b.pdf"):
+        (tmp_path / name).write_bytes(name.encode())
+    files, manifest = plan_rebuild(tmp_path, {"collection": None, "files": {}}, names={"a.pdf"})
+    assert [f.name for f in files] == ["a.pdf"]
+    assert "b.pdf" in manifest["files"]

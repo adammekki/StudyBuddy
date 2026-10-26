@@ -26,9 +26,13 @@ def _judge(llm):
     return judge
 
 
+def _answer_fn(llm):
+    return lambda prompt: _text_of(llm.invoke(prompt))
+
+
 def make_graph(settings, deps):
     store = Store(settings.data_dir / "chroma", deps.embed)
-    answer = _text_of(deps.llm.invoke)
+    answer = _answer_fn(deps.llm)
     return build_graph(
         GraphDeps(
             retrieve=store.search,

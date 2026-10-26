@@ -34,3 +34,13 @@ def test_page_fetch_is_capped_and_tag_stripped(monkeypatch):
     out = web.web_search("q")
     assert len(out[0]["text"]) <= 4000
     assert "<p>" not in out[0]["text"]
+
+
+def test_non_thin_snippets_skip_page_fetch(monkeypatch):
+    class LongDDGS:
+        def text(self, query, max_results=5):
+            return [{"title": "t", "href": "https://x.test", "body": "y" * 500}]
+
+    monkeypatch.setattr(web, "DDGS", LongDDGS)
+    monkeypatch.setattr(web.httpx, "get", lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not fetch")))
+    assert web.web_search("q")[0]["text"] == "y" * 500

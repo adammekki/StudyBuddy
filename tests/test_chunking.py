@@ -22,3 +22,16 @@ def test_extract_pages_reads_page_numbers(tmp_path):
     doc.close()
     assert extract_pages(path)[0][0] == 1
     assert "Lecture one" in extract_pages(path)[0][1]
+
+
+def test_image_only_pdf_raises_no_text(tmp_path):
+    import pytest
+    from studybuddy.chunking import NoTextError
+
+    doc = pymupdf.open()
+    doc.new_page()
+    path = tmp_path / "blank.pdf"
+    doc.save(path)
+    doc.close()
+    with pytest.raises(NoTextError):
+        extract_pages(path)

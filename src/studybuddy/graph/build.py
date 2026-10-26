@@ -154,7 +154,7 @@ def build_graph(d: GraphDeps):
     graph.add_node("step_back", step_back)
     graph.add_node("retrieve", retrieve)
     graph.add_node("generate", generate)
-    graph.add_node("regenerate", lambda s: {**generate(s), "attempts": s.get("attempts", 0) + 1})
+    graph.add_node("regenerate", lambda s: {"attempts": s.get("attempts", 0) + 1})
     graph.add_node("web", web)
 
     graph.set_entry_point("rewrite")

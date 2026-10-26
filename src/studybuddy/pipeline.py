@@ -7,7 +7,6 @@ from studybuddy.ingest import (
     plan_rebuild,
     record_failure,
     save_manifest,
-    sha256_file,
 )
 from studybuddy.raptor import build_tree
 from studybuddy.store import Store
@@ -23,21 +22,25 @@ def _manifest_path(settings: Settings) -> Path:
 
 def rebuild(settings: Settings, deps, names: set[str] | None = None) -> dict:
     manifest = load_manifest(_manifest_path(settings))
-    files, manifest = plan_rebuild(settings.rag_dir, manifest, names)
+    trigger, manifest = plan_rebuild(settings.rag_dir, manifest, names)
+    indexable = [
+        path
+        for path in sorted(settings.rag_dir.glob("*.pdf"))
+        if not manifest.get("files", {}).get(path.name, {}).get("quarantined")
+    ]
     errors: list[dict] = []
 
-    if not files:
+    if not trigger or not indexable:
         quarantined = [
             {"file": name, "error": entry.get("error")}
             for name, entry in manifest.get("files", {}).items()
             if entry.get("quarantined")
         ]
+        errors.extend(quarantined)
         save_manifest(_manifest_path(settings), manifest)
-        if quarantined:
-            errors.extend(quarantined)
         return {
             "collection": manifest.get("collection"),
-            "decks": 0,
+            "decks": len(indexable),
             "chunks": 0,
             "levels": 0,
             "errors": errors,
@@ -45,7 +48,7 @@ def rebuild(settings: Settings, deps, names: set[str] | None = None) -> dict:
 
     chunks: list[dict] = []
     decks = 0
-    for path in files:
+    for path in indexable:
         try:
             pages = extract_pages(path)
             file_chunks = make_chunks(
@@ -58,6 +61,10 @@ def rebuild(settings: Settings, deps, names: set[str] | None = None) -> dict:
                 raise ValueError("no usable text")
             chunks.extend(file_chunks)
             decks += 1
+            entry = manifest["files"].setdefault(path.name, {})
+            entry["failures"] = 0
+            entry["error"] = None
+            entry["quarantined"] = False
         except Exception as error:  # one bad deck must not stop the rebuild
             record_failure(manifest, path.name, str(error))
             errors.append({"file": path.name, "error": str(error)})
@@ -75,14 +82,10 @@ def rebuild(settings: Settings, deps, names: set[str] | None = None) -> dict:
     tree = build_tree(chunks, summarize=lambda text: _summarize(deps, text))
     store = Store(settings.data_dir / "chroma", deps.embed)
     collection = store.build(tree)
-    store.activate(collection)
 
     manifest["collection"] = collection
-    manifest["files"] = {
-        name: {**entry, "sha": sha256_file(settings.rag_dir / name)}
-        for name, entry in manifest.get("files", {}).items()
-    }
     save_manifest(_manifest_path(settings), manifest)
+    store.activate(collection)
 
     return {
         "collection": collection,

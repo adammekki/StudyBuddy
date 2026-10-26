@@ -10,7 +10,6 @@ from studybuddy.config import Settings, load_settings
 from studybuddy.deps import make_deps
 from studybuddy.ingest import (
     plan_rebuild,
-    save_manifest,
     snapshot,
     stable_names,
 )
@@ -18,17 +17,23 @@ from studybuddy.pipeline import _manifest_path, index_status, rebuild
 
 OLLAMA = "http://127.0.0.1:11434"
 POLL_SECONDS = 5
+REBUILD_LOCK = threading.Lock()
 
 
 def list_models() -> list[str]:
-    response = httpx.get(f"{OLLAMA}/api/tags", timeout=5)
-    response.raise_for_status()
+    try:
+        response = httpx.get(f"{OLLAMA}/api/tags", timeout=5)
+        response.raise_for_status()
+    except httpx.HTTPError as error:
+        raise RuntimeError(
+            f"Ollama is not reachable at {OLLAMA}. Run: ollama serve"
+        ) from error
     return [model["name"] for model in response.json().get("models", [])]
 
 
 def check_models(required: list[str]) -> None:
-    available = set(list_models())
-    missing = [name for name in required if name not in available]
+    available = {name.split(":")[0] for name in list_models()}
+    missing = [name for name in required if name.split(":")[0] not in available]
     if missing:
         pulls = " && ".join(f"ollama pull {name}" for name in missing)
         raise RuntimeError(f"Ollama is missing models. Run: {pulls}")
@@ -42,19 +47,33 @@ def watch(settings: Settings, deps, status: dict, stop: threading.Event) -> None
         previous = current
         if not stable:
             continue
-        files, manifest = plan_rebuild(
-            settings.rag_dir, _load(settings), stable
-        )
+        files, _ = plan_rebuild(settings.rag_dir, _load(settings), stable)
         if not files:
             continue
-        status["state"] = "building"
-        try:
-            result = rebuild(settings, deps, stable)
-            status["last_result"] = result
-            status["state"] = "failed" if result["errors"] else "idle"
-        except Exception as error:
-            status["last_error"] = str(error)
-            status["state"] = "failed"
+        _run_rebuild(settings, deps, status, stable)
+
+
+def _stable_now(settings: Settings) -> set[str]:
+    first = snapshot(settings.rag_dir)
+    time.sleep(POLL_SECONDS)
+    return stable_names(first, snapshot(settings.rag_dir))
+
+
+def _run_rebuild(settings: Settings, deps, status: dict, names=None):
+    if not REBUILD_LOCK.acquire(blocking=False):
+        return None
+    status["state"] = "building"
+    try:
+        result = rebuild(settings, deps, names)
+        status["last_result"] = result
+        status["state"] = "failed" if result["errors"] else "idle"
+        return result
+    except Exception as error:
+        status["last_error"] = str(error)
+        status["state"] = "failed"
+        return None
+    finally:
+        REBUILD_LOCK.release()
 
 
 def _load(settings: Settings) -> dict:
@@ -83,7 +102,7 @@ def build_state(settings: Settings, deps) -> tuple[AppState, dict]:
         return {
             "answer": result.get("answer", ""),
             "source": result.get("source", "slides"),
-            "sources": seen,
+            "sources": seen if result.get("source") == "slides" else [],
         }
 
     def status_view() -> dict:
@@ -97,6 +116,8 @@ def build_state(settings: Settings, deps) -> tuple[AppState, dict]:
         return view
 
     def reindex() -> None:
+        if status.get("state") == "building":
+            return
         threading.Thread(
             target=_reindex_now, args=(settings, deps, status), daemon=True
         ).start()
@@ -105,13 +126,7 @@ def build_state(settings: Settings, deps) -> tuple[AppState, dict]:
 
 
 def _reindex_now(settings: Settings, deps, status: dict) -> None:
-    status["state"] = "building"
-    try:
-        status["last_result"] = rebuild(settings, deps)
-        status["state"] = "failed" if status["last_result"]["errors"] else "idle"
-    except Exception as error:
-        status["last_error"] = str(error)
-        status["state"] = "failed"
+    _run_rebuild(settings, deps, status, _stable_now(settings))
 
 
 def main() -> None:
@@ -121,7 +136,7 @@ def main() -> None:
 
     if index_status(settings)["collection"] is None:
         print("No index yet; building one from", settings.rag_dir)
-        print(rebuild(settings, deps))
+        print(rebuild(settings, deps, _stable_now(settings)))
 
     state, status = build_state(settings, deps)
     stop = threading.Event()

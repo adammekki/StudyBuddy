@@ -58,6 +58,11 @@ def create_app(state: AppState) -> FastAPI:
                 yield _event({"type": "done"})
                 return
 
+            if result.get("source") == "refused":
+                yield _event({"type": "error", "message": result.get("answer", "")})
+                yield _event({"type": "done"})
+                return
+
             yield _event(
                 {
                     "type": "answer",
@@ -65,7 +70,7 @@ def create_app(state: AppState) -> FastAPI:
                     "source": result.get("source", "slides"),
                 }
             )
-            if result.get("sources"):
+            if result.get("source") == "slides" and result.get("sources"):
                 yield _event({"type": "sources", "items": result["sources"]})
             for notice in result.get("notices", []):
                 yield _event({"type": "notice", "text": notice})

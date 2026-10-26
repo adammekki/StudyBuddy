@@ -17,5 +17,7 @@ def merge_results(a: list[dict], b: list[dict], limit: int = 8) -> list[dict]:
 def format_context(chunks: list[dict], limit: int = 8) -> str:
     lines = []
     for chunk in chunks[:limit]:
+        if chunk.get("level", 0) > 0:
+            continue  # summaries carry no deck/page, so they cannot be cited
         lines.append(f"[{chunk['source']} p.{chunk['page']}] {chunk['text']}")
     return "\n\n".join(lines)

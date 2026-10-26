@@ -40,3 +40,19 @@ def test_status_and_reindex_contract():
     c = TestClient(create_app(fake_state()))
     assert c.get("/status").json()["state"] in {"idle", "building"}
     assert c.post("/reindex").status_code == 202
+
+
+def test_web_answer_has_no_slide_sources():
+    state = fake_state(answer="From the web:\nZ", source="web", sources=[{"deck": "a.pdf", "page": 1}])
+    events = [json.loads(l) for l in TestClient(create_app(state)).post(
+        "/chat", json={"message": "q", "history": [], "session_id": "s"}
+    ).text.splitlines()]
+    assert [e["type"] for e in events] == ["answer", "done"]
+
+
+def test_refused_answer_is_an_error_event():
+    state = fake_state(answer="Your slides do not cover this", source="refused")
+    events = [json.loads(l) for l in TestClient(create_app(state)).post(
+        "/chat", json={"message": "q", "history": [], "session_id": "s"}
+    ).text.splitlines()]
+    assert events[0]["type"] == "error"

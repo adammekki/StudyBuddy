@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 import chromadb
@@ -53,8 +54,13 @@ class Store:
             )
         return name
 
+    def _write_active(self, name: str) -> None:
+        tmp = self._active_file.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"collection": name}))
+        os.replace(tmp, self._active_file)
+
     def activate(self, name: str) -> None:
-        self._active_file.write_text(json.dumps({"collection": name}))
+        self._write_active(name)
 
     def active_name(self) -> str | None:
         if not self._active_file.exists():

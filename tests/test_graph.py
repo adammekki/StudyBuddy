@@ -90,3 +90,39 @@ def test_both_paths_fail_gives_labelled_refusal():
     out = build_graph(d).invoke({"question": "q", "history": [], "attempts": 0})
     assert out["source"] == "refused"
     assert out["answer"]
+
+
+def test_web_answer_is_labelled_and_carries_no_slide_text():
+    d = _deps(
+        retrieve=lambda q, k: [{"text": "SECRET SLIDE", "source": "a.pdf", "page": 1, "score": 0.1}],
+        answer_llm=lambda p: ("web answer" if "WEB" in p else "slide answer"),
+    )
+    out = build_graph(d).invoke({"question": "q", "history": [], "attempts": 0})
+    assert out["source"] == "web"
+    assert out["answer"].startswith("From the web")
+    assert "SECRET SLIDE" not in out["answer"]
+
+
+def test_score_just_below_threshold_goes_to_web():
+    d = _deps(retrieve=lambda q, k: [{"text": "x", "source": "a.pdf", "page": 1, "score": 0.349}])
+    assert build_graph(d).invoke({"question": "q", "history": [], "attempts": 0})["source"] == "web"
+
+
+def test_regeneration_happens_exactly_once():
+    calls = {"slide": 0, "web": 0}
+
+    def answer(p):
+        if "WEB results" in p:
+            calls["web"] += 1
+        else:
+            calls["slide"] += 1
+        return "unsupported claim"
+
+    def judge(p):
+        return False if "supported" in p.lower() else True
+
+    build_graph(_deps(judge=judge, answer_llm=answer)).invoke(
+        {"question": "q", "history": [], "attempts": 0}
+    )
+    assert calls["slide"] == 2
+    assert calls["web"] == 1
