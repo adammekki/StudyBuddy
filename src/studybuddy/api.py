@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -15,6 +15,7 @@ class AppState:
     run: Callable[[str, list[dict]], dict]
     status: Callable[[], dict]
     reindex: Callable[[], None]
+    rag_dir: Path | None = None
 
 
 class ChatRequest(BaseModel):
@@ -37,6 +38,23 @@ def create_app(state: AppState) -> FastAPI:
     @app.get("/status")
     def status() -> dict:
         return state.status()
+
+    @app.get("/deck/{name}")
+    def deck(name: str) -> FileResponse:
+        root = (state.rag_dir or Path(".")).resolve()
+        path = (root / name).resolve()
+        if (
+            not path.is_relative_to(root)
+            or path.suffix.lower() != ".pdf"
+            or not path.is_file()
+        ):
+            raise HTTPException(status_code=404, detail="deck not found")
+        return FileResponse(
+            path,
+            media_type="application/pdf",
+            filename=path.name,
+            content_disposition_type="inline",
+        )
 
     @app.post("/reindex", status_code=202)
     def reindex() -> dict:

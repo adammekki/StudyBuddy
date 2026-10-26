@@ -122,7 +122,9 @@ def build_state(settings: Settings, deps) -> tuple[AppState, dict]:
             target=_reindex_now, args=(settings, deps, status), daemon=True
         ).start()
 
-    return AppState(run=run, status=status_view, reindex=reindex), status
+    return AppState(
+        run=run, status=status_view, reindex=reindex, rag_dir=settings.rag_dir
+    ), status
 
 
 def _reindex_now(settings: Settings, deps, status: dict) -> None:

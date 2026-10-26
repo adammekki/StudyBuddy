@@ -5,36 +5,91 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>StudyBuddy</title>
 <style>
-  :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
-  body { margin: 0; display: flex; flex-direction: column; height: 100vh; }
-  header { padding: .6rem 1rem; border-bottom: 1px solid #8884; font-size: .85rem; display: flex; gap: 1rem; align-items: center; }
-  #status { opacity: .75; flex: 1; }
-  #log { flex: 1; overflow-y: auto; padding: 1rem; display: flex; flex-direction: column; gap: .8rem; }
-  .msg { max-width: 60rem; padding: .7rem .9rem; border-radius: .5rem; white-space: pre-wrap; }
-  .user { align-self: flex-end; background: #3b82f6; color: #fff; }
-  .bot { align-self: flex-start; background: #8882; }
-  .web { border-left: 4px solid #d97706; }
-  .bad { border-left: 4px solid #dc2626; }
-  .sources { font-size: .8rem; opacity: .8; margin-top: .4rem; }
-  form { display: flex; gap: .5rem; padding: 1rem; border-top: 1px solid #8884; }
-  textarea { flex: 1; resize: none; height: 3rem; padding: .5rem; font: inherit; }
-  button { padding: 0 1.2rem; font: inherit; cursor: pointer; }
+  :root {
+    --bg: #08090b;
+    --ink: #e6e8ec;
+    --dim: #8a919e;
+    --faint: #3a4049;
+    --accent: #7dd3fc;
+    --panel: #11141a;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.65 ui-sans-serif, system-ui, -apple-system, sans-serif;
+  }
+  #jelly { position: fixed; inset: 0; opacity: .13; pointer-events: none; z-index: 0; }
+  #app { position: relative; z-index: 1; display: flex; flex-direction: column; min-height: 100vh; }
+  header {
+    display: flex; align-items: center; gap: 1rem;
+    padding: 1rem 1.25rem;
+    max-width: 820px; width: 100%; margin: 0 auto;
+  }
+  header strong { font-weight: 600; letter-spacing: .01em; }
+  #status { flex: 1; font-size: 12px; color: var(--dim); }
+  #reindex {
+    background: none; border: 1px solid var(--faint); color: var(--dim);
+    font: inherit; font-size: 12px; padding: .25rem .6rem; border-radius: 6px; cursor: pointer;
+  }
+  #reindex:hover { color: var(--ink); border-color: var(--dim); }
+  #log {
+    flex: 1; width: 100%; max-width: 820px; margin: 0 auto;
+    padding: 1rem 1.25rem 2rem; display: flex; flex-direction: column; gap: 1.6rem;
+  }
+  .turn { display: flex; flex-direction: column; }
+  .user { align-self: flex-end; max-width: 85%; background: var(--panel); padding: .6rem .85rem; border-radius: 10px; white-space: pre-wrap; }
+  .bot { align-self: flex-start; max-width: 100%; white-space: pre-wrap; }
+  .bot.web { border-left: 2px solid #d97706; padding-left: .9rem; }
+  .bot.bad { color: #fca5a5; }
+  .who { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); margin-bottom: .25rem; }
+  .sources { margin-top: .45rem; font-size: 11.5px; line-height: 1.5; color: var(--dim); }
+  .sources a { color: var(--dim); text-decoration: none; border-bottom: 1px dotted var(--faint); }
+  .sources a:hover { color: var(--accent); border-color: var(--accent); }
+  .sources span + span::before { content: " · "; color: var(--faint); }
+  .pending { color: var(--dim); font-size: 13px; font-style: italic; }
+  form {
+    position: sticky; bottom: 0; z-index: 2;
+    width: 100%; max-width: 820px; margin: 0 auto;
+    padding: .75rem 1.25rem 1.25rem; display: flex; gap: .6rem;
+    background: linear-gradient(to top, var(--bg) 65%, transparent);
+  }
+  textarea {
+    flex: 1; resize: none; min-height: 46px; max-height: 180px;
+    padding: .7rem .85rem; border-radius: 10px;
+    background: var(--panel); color: var(--ink);
+    border: 1px solid var(--faint); font: inherit; line-height: 1.45;
+  }
+  textarea:focus { outline: none; border-color: var(--dim); }
+  textarea::placeholder { color: var(--faint); }
+  button[type=submit] {
+    background: var(--ink); color: var(--bg); border: 0; border-radius: 10px;
+    padding: 0 1.1rem; font: inherit; cursor: pointer;
+  }
+  button[type=submit]:disabled { opacity: .45; cursor: default; }
 </style>
 </head>
 <body>
-<header>
-  <strong>StudyBuddy</strong>
-  <span id="status">loading…</span>
-  <button id="reindex" type="button">Reindex</button>
-</header>
-<div id="log"></div>
-<form id="form">
-  <textarea id="input" placeholder="Ask about your slides…" autofocus></textarea>
-  <button type="submit">Send</button>
-</form>
+<canvas id="jelly" aria-hidden="true"></canvas>
+<div id="app">
+  <header>
+    <strong>StudyBuddy</strong>
+    <span id="status">loading…</span>
+    <button id="reindex" type="button">Reindex</button>
+  </header>
+  <div id="log" aria-live="polite"></div>
+  <form id="form">
+    <textarea id="input" rows="1" placeholder="Ask about your slides…" autofocus></textarea>
+    <button type="submit" id="send">Send</button>
+  </form>
+</div>
 <script>
 const log = document.getElementById('log');
 const input = document.getElementById('input');
+const sendBtn = document.getElementById('send');
 const statusEl = document.getElementById('status');
 const HISTORY_KEY = 'studybuddy_history';
 
@@ -44,13 +99,42 @@ const remember = (role, content) => {
   sessionStorage.setItem(HISTORY_KEY, JSON.stringify(next));
 };
 
-function bubble(text, cls) {
-  const div = document.createElement('div');
-  div.className = `msg ${cls}`;
-  div.textContent = text;
-  log.appendChild(div);
+function turn(role, text, cls) {
+  const wrapper = document.createElement('div');
+  wrapper.className = `turn ${role}`;
+  if (role === 'bot' && cls) wrapper.classList.add(cls);
+  if (role === 'bot') {
+    const who = document.createElement('div');
+    who.className = 'who';
+    who.textContent = cls === 'web' ? 'from the web' : 'from your slides';
+    wrapper.appendChild(who);
+  }
+  const body = document.createElement('div');
+  body.textContent = text;
+  wrapper.appendChild(body);
+  log.appendChild(wrapper);
   log.scrollTop = log.scrollHeight;
-  return div;
+  return wrapper;
+}
+
+function footnote(wrapper, parts) {
+  const line = document.createElement('div');
+  line.className = 'sources';
+  parts.forEach((part, index) => {
+    const span = document.createElement('span');
+    if (part.href) {
+      const a = document.createElement('a');
+      a.href = part.href;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.textContent = part.text;
+      span.appendChild(a);
+    } else {
+      span.textContent = part.text;
+    }
+    line.appendChild(span);
+  });
+  wrapper.appendChild(line);
 }
 
 async function refreshStatus() {
@@ -59,7 +143,7 @@ async function refreshStatus() {
     const decks = s.decks?.length ?? 0;
     statusEl.textContent = s.state === 'building'
       ? 'rebuilding index…'
-      : `${decks} deck${decks === 1 ? '' : 's'} indexed · ${s.chunks ?? 0} chunks`;
+      : `${decks} deck${decks === 1 ? '' : 's'} · ${s.chunks ?? 0} chunks`;
   } catch {
     statusEl.textContent = 'server not reachable';
   }
@@ -70,55 +154,168 @@ document.getElementById('reindex').addEventListener('click', async () => {
   refreshStatus();
 });
 
+function autogrow() {
+  input.style.height = 'auto';
+  input.style.height = Math.min(input.scrollHeight, 180) + 'px';
+}
+input.addEventListener('input', autogrow);
+input.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter' && !event.shiftKey) {
+    event.preventDefault();
+    document.getElementById('form').requestSubmit();
+  }
+});
+
 document.getElementById('form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const message = input.value.trim();
-  if (!message) return;
+  if (!message || sendBtn.disabled) return;
   input.value = '';
-  bubble(message, 'user');
+  autogrow();
+  sendBtn.disabled = true;
 
-  const res = await fetch('/chat', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ message, history: history(), session_id: 'local' }),
-  });
+  turn('user', message);
+  const pending = document.createElement('div');
+  pending.className = 'pending';
+  pending.textContent = 'searching your slides…';
+  log.appendChild(pending);
+  log.scrollTop = log.scrollHeight;
 
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let node = null;
+  let answerNode = null;
+  let sawDone = false;
 
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop();
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      const event = JSON.parse(line);
-      if (event.type === 'answer') {
-        node = bubble(event.text, event.source === 'web' ? 'bot web' : 'bot');
-      } else if (event.type === 'sources' && node) {
-        const div = document.createElement('div');
-        div.className = 'sources';
-        div.textContent = 'Sources: ' + event.items.map((s) => `${s.deck} p.${s.page}`).join(', ');
-        node.appendChild(div);
-      } else if (event.type === 'notice' && node) {
-        const div = document.createElement('div');
-        div.className = 'sources';
-        div.textContent = event.text;
-        node.appendChild(div);
-      } else if (event.type === 'error') {
-        bubble(event.message, 'bot bad');
-      } else if (event.type === 'done') {
-        remember('user', message);
-        if (node) remember('assistant', node.textContent);
-        refreshStatus();
+  try {
+    const res = await fetch('/chat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ message, history: history(), session_id: 'local' }),
+    });
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const event = JSON.parse(line);
+        if (event.type === 'answer') {
+          pending.remove();
+          answerNode = turn('bot', event.text, event.source === 'web' ? 'web' : '');
+        } else if (event.type === 'sources' && answerNode) {
+          footnote(answerNode, event.items.map((s) => ({
+            text: `${s.deck} p.${s.page}`,
+            href: `/deck/${encodeURIComponent(s.deck)}#page=${s.page}`,
+          })));
+        } else if (event.type === 'notice' && answerNode) {
+          footnote(answerNode, [{ text: event.text }]);
+        } else if (event.type === 'error') {
+          pending.remove();
+          answerNode = turn('bot', event.message, 'bad');
+        } else if (event.type === 'done') {
+          sawDone = true;
+        }
+      }
+    }
+  } catch (error) {
+    pending.remove();
+    turn('bot', 'Connection lost: ' + error.message, 'bad');
+  }
+
+  if (!sawDone) {
+    pending.remove();
+    if (!answerNode) turn('bot', 'Connection lost before the answer finished.', 'bad');
+  }
+  pending.remove();
+
+  remember('user', message);
+  if (answerNode) remember('assistant', answerNode.textContent);
+  sendBtn.disabled = false;
+  input.focus();
+  refreshStatus();
+});
+
+/* Animated ASCII jellyfish, low opacity, behind the chat. */
+(() => {
+  const canvas = document.getElementById('jelly');
+  const ctx = canvas.getContext('2d');
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)');
+  let width = 0, height = 0;
+
+  const jellies = Array.from({ length: 3 }, (_, i) => ({
+    x: 0.18 + i * 0.31,
+    y: 0.85 - i * 0.22,
+    r: 26 + i * 9,
+    speed: 0.00016 + i * 0.00006,
+    phase: i * 2.1,
+  }));
+
+  function resize() {
+    const dpr = Math.min(devicePixelRatio || 1, 2);
+    width = innerWidth;
+    height = innerHeight;
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    canvas.style.width = width + 'px';
+    canvas.style.height = height + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.font = '13px ui-monospace, SFMono-Regular, Menlo, monospace';
+    ctx.textAlign = 'center';
+  }
+
+  function drawJelly(j, t) {
+    const cx = j.x * width;
+    const cy = (j.y - t * j.speed) * height;
+    const bob = Math.sin(t * 0.0011 + j.phase) * 7;
+    const rx = j.r * (1 + Math.sin(t * 0.0016 + j.phase) * 0.06);
+    const ry = j.r * 0.62;
+
+    ctx.fillStyle = '#9ad7ef';
+
+    // bell outline: dome of ASCII characters
+    for (let a = 0; a <= Math.PI; a += 0.075) {
+      const x = cx + Math.cos(a) * rx;
+      const y = cy + bob - Math.sin(a) * ry;
+      ctx.fillText(Math.sin(a) > 0.6 ? '=' : '-', x, y);
+    }
+    // bell rim
+    for (let x = -rx; x <= rx; x += 11) {
+      ctx.fillText('.', cx + x, cy + bob + 1);
+    }
+    // tentacles: wavy lines of punctuation
+    for (let i = 0; i < 5; i++) {
+      const offset = -rx * 0.75 + (i * rx * 1.5) / 4;
+      for (let k = 1; k <= 7; k++) {
+        const wave = Math.sin(t * 0.0013 + j.phase + k * 0.6 + i) * 3.5;
+        ctx.fillText(k % 2 ? '|' : ':', cx + offset + wave, cy + bob + k * 9);
       }
     }
   }
-});
+
+  function frame(t) {
+    ctx.clearRect(0, 0, width, height);
+    jellies.forEach((j) => drawJelly(j, t));
+    requestAnimationFrame(frame);
+  }
+
+  resize();
+  addEventListener('resize', resize);
+  if (reduce.matches) {
+    requestAnimationFrame(frame0);
+  } else {
+    requestAnimationFrame(frame);
+  }
+
+  function frame0(t) {
+    ctx.clearRect(0, 0, width, height);
+    jellies.forEach((j) => drawJelly(j, 1000));
+  }
+})();
 
 refreshStatus();
 setInterval(refreshStatus, 5000);

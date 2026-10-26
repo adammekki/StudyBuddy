@@ -56,3 +56,30 @@ def test_refused_answer_is_an_error_event():
         "/chat", json={"message": "q", "history": [], "session_id": "s"}
     ).text.splitlines()]
     assert events[0]["type"] == "error"
+
+
+def test_deck_serves_pdf_inline_from_rag(tmp_path):
+    (tmp_path / "deck one.pdf").write_bytes(b"%PDF-1.4 test")
+    state = AppState(
+        run=lambda q, h: {},
+        status=lambda: {},
+        reindex=lambda: None,
+        rag_dir=tmp_path,
+    )
+    r = TestClient(create_app(state)).get("/deck/deck%20one.pdf")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "application/pdf"
+    assert r.headers["content-disposition"].startswith("inline")
+
+
+def test_deck_refuses_paths_outside_rag(tmp_path):
+    (tmp_path / "RAG").mkdir()
+    state = AppState(
+        run=lambda q, h: {},
+        status=lambda: {},
+        reindex=lambda: None,
+        rag_dir=tmp_path / "RAG",
+    )
+    client = TestClient(create_app(state))
+    assert client.get("/deck/..%2F..%2Fetc%2Fpasswd").status_code == 404
+    assert client.get("/deck/missing.pdf").status_code == 404
