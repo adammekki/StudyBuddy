@@ -48,7 +48,7 @@ The author just learned to build a RAG pipeline end to end with LangChain and wa
 - Host machine: Apple M4, 16 GB RAM, macOS. Ollama 0.15.4 installed.
 - Host Python is 3.14.3; the LangChain/LangGraph/RAPTOR dependency set is not reliable there. Use `uv` with Python 3.12.
 - Model budget with 16 GB: one 7b generator plus one 3b judge plus an embedding model can coexist.
-- Local inference latency matters: each extra model call costs 1-3 s.
+- Local inference latency matters: each extra model call costs 1-3 s. A full slide turn can use up to five 3b calls (rewrite, step-back, route, two judges) plus one 7b generation, so expect roughly 10-20 s per answer.
 - Classroom material may be copyrighted or restricted: nothing leaves the machine except explicit web-search queries.
 
 ## Decisions made by the user
@@ -61,6 +61,7 @@ The author just learned to build a RAG pipeline end to end with LangChain and wa
 - Retrieval structure: hierarchical indexing following RAPTOR.
 - Orchestration: adaptive RAG, with a small-model judge for routing and quality checks. Jev (TypeSafe AI) was considered and rejected: it is a hosted service, so it breaks the local-only promise and sends slide content off the machine.
 - Follow-up questions must work.
+- Step-back query transformation: the specific question is generalised so the answer has its surrounding context, not just the narrow passage.
 
 ## Architecture
 
@@ -71,14 +72,15 @@ RAG/ folder (PDFs)
             └─ Chroma (persistent, one collection, metadata: source, page, level, node id)
 
 browser chat  ──POST /chat──>  LangGraph adaptive graph
+                                 rewrite_query (3b, when history exists)
+                                 step_back (3b): general question behind the specific one
                                  route_scope (3b)
-                                 retrieve (collapsed tree, k=8)
+                                 retrieve (two queries, collapsed tree, merged, k=8)
                                  grade_relevance (vector score, no model)
                                  generate (7b, citations)
                                  check_hallucination (3b)
                                  check_adequacy (3b)
                                  web_search (DuckDuckGo) + web_generate (7b)
-                                 rewrite_query (3b, when history exists)
 ```
 
 ### Ingestion
@@ -104,14 +106,17 @@ browser chat  ──POST /chat──>  LangGraph adaptive graph
 
 Nodes and edges:
 
-1. `route_scope` (3b judge, structured yes/no): is the question about this course material? Web question goes to `web_search`.
-2. `retrieve`: collapsed-tree retrieval, k=8, with scores.
-3. `grade_relevance`: deterministic, no model call. Relevant only if at least one chunk exists AND the top cosine similarity ≥ 0.35 (Chroma collection uses cosine space; threshold tuned during eval). Not relevant goes to `web_search`.
-4. `generate`: 7b, prompt restricted to retrieved chunks, must cite `deck, page` inline, must say "not in the slides" when unsupported.
-5. `check_hallucination` (3b): is every claim supported by the retrieved chunks? Fail means regenerate once with the judge's complaint; a second fail goes to web.
-6. `check_adequacy` (3b): does the answer actually answer the question? Fail goes to web.
-7. `web_search`: DuckDuckGo search, snippets first, fetch up to 2 pages when snippets are thin. `web_generate` answers from those results and the reply is labelled "From the web" with links.
-8. `rewrite_query` (3b): when history exists, rewrite the latest turn into a standalone question before routing and retrieval. Last 6 turns kept. Retrieval always uses the standalone query; history goes to the generator as context only.
+1. `rewrite_query` (3b): when history exists, rewrite the latest turn into a standalone question. Last 6 turns kept. History goes to the generator as context only.
+2. `step_back` (3b): from the standalone question, produce a more general question behind it ("how does X work?" from "why does this step in the proof use X?"). Both queries are retrieved, so the specific answer sits in context with the general background.
+3. `route_scope` (3b judge, structured yes/no): is the question about this course material? Web question goes to `web_search`. Judge the original question, not the step-back.
+4. `retrieve`: collapsed-tree retrieval, k=8, once per query. Merge results, dedupe on `(source, page, chunk_index)`, keep the best score, cap at 8 chunks. Step-back retrieval adds no model call, only an embedding query.
+5. `grade_relevance`: deterministic, no model call. Relevant only if at least one chunk exists AND the top cosine similarity ≥ 0.35 (Chroma collection uses cosine space; threshold tuned during eval). Not relevant goes to `web_search`.
+6. `generate`: 7b, prompt restricted to retrieved chunks, must cite `deck, page` inline, must say "not in the slides" when unsupported. The prompt names the original question as the one to answer, with the step-back question and its chunks as background.
+7. `check_hallucination` (3b): is every claim supported by the retrieved chunks? Fail means regenerate once with the judge's complaint; a second fail goes to web.
+8. `check_adequacy` (3b): does the answer actually answer the question? Fail goes to web.
+9. `web_search`: DuckDuckGo search, snippets first, fetch up to 2 pages when snippets are thin. `web_generate` answers from those results and the reply is labelled "From the web" with links.
+
+If `step_back` fails or returns the same question, continue with the standalone question only. A failed transformation must not block an answer.
 
 Loop caps: one regeneration, one web attempt. No unbounded cycles.
 

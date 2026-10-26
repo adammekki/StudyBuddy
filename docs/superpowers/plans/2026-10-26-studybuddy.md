@@ -255,6 +255,7 @@ git commit -m "feat: persistent chroma store with atomic collection swap"
 **Interfaces:**
 - Produces: `def build_tree(chunks: list[dict], summarize: Callable[[str], str], cluster: Callable[[list[dict]], list[list[int]]], levels: int = 2) -> list[dict]` — level 0 keeps chunks, higher levels get `{"text", "source": "summary", "page": 0, "level": n, "parent_id": str}`.
 - Produces: `def is_relevant(chunks: list[dict], threshold: float = 0.35) -> bool`.
+- Produces: `def merge_results(a: list[dict], b: list[dict], limit: int = 8) -> list[dict]` — dedupe on `(source, page, text)`, keep the higher `score`, sort by score desc.
 - Produces: `def format_context(chunks: list[dict], limit: int = 8) -> str` — lines prefixed `[deck.pdf p.N]`.
 - Produces: default `cluster_chunks` using UMAP + `GaussianMixture`, capped at `n_components=min(10, n_samples-1)`.
 
@@ -274,6 +275,14 @@ def test_gate_requires_chunk_and_threshold():
     assert is_relevant([]) is False
     assert is_relevant([{"score": 0.2}]) is False
     assert is_relevant([{"score": 0.9}]) is True
+
+def test_merge_dedupes_keeping_best_score():
+    a = [{"text": "x", "source": "a.pdf", "page": 1, "level": 0, "score": 0.8}]
+    b = [{"text": "x", "source": "a.pdf", "page": 1, "level": 0, "score": 0.6},
+         {"text": "y", "source": "b.pdf", "page": 2, "level": 1, "score": 0.5}]
+    merged = merge_results(a, b)
+    assert [m["text"] for m in merged] == ["x", "y"]
+    assert merged[0]["score"] == 0.8
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -305,10 +314,10 @@ git commit -m "feat: build raptor summary tree and gate retrieval by similarity"
 - Create: `src/studybuddy/graph/__init__.py`, `src/studybuddy/graph/state.py`, `src/studybuddy/graph/nodes.py`, `src/studybuddy/graph/build.py`, `src/studybuddy/web.py`, `tests/test_graph.py`, `tests/test_web.py`
 
 **Interfaces:**
-- Consumes: `format_context`, `is_relevant`, `Store.search`.
-- Produces: `ChatState` TypedDict with `question: str`, `history: list[dict]`, `standalone: str`, `chunks: list[dict]`, `answer: str`, `source: str`, `notices: list[str]`, `attempts: int`.
-- Produces: `@dataclass GraphDeps` with `retrieve: Callable[[str, int], list[dict]]`, `answer_llm: Callable[[str], str]`, `judge: Callable[[str], bool]`, `rewrite: Callable[[str, list[dict]], str]`, `web_search: Callable[[str], list[dict]]`, `k: int`, `threshold: float`.
-- Produces: `def build_graph(d: GraphDeps) -> CompiledGraph` with nodes `rewrite`, `route`, `retrieve`, `generate`, `regenerate`, `web`, `give_up`.
+- Consumes: `format_context`, `is_relevant`, `merge_results`, `Store.search`.
+- Produces: `ChatState` TypedDict with `question: str`, `history: list[dict]`, `standalone: str`, `step_back: str`, `chunks: list[dict]`, `answer: str`, `source: str`, `notices: list[str]`, `attempts: int`.
+- Produces: `@dataclass GraphDeps` with `retrieve: Callable[[str, int], list[dict]]`, `answer_llm: Callable[[str], str]`, `judge: Callable[[str], bool]`, `rewrite: Callable[[str, list[dict]], str]`, `step_back: Callable[[str], str]`, `web_search: Callable[[str], list[dict]]`, `k: int`, `threshold: float`.
+- Produces: `def build_graph(d: GraphDeps) -> CompiledGraph` with nodes `rewrite`, `step_back`, `route`, `retrieve`, `generate`, `regenerate`, `web`, `give_up`.
 - Produces: `def web_search(query: str, fetch_pages: int = 2) -> list[dict]` — `{"title", "url", "text"}`, `ddgs` snippets, page fetch with 5 s timeout and 4000-char trim.
 
 - [ ] **Step 1: Write the failing test**
@@ -319,6 +328,7 @@ def _deps(**over):
              answer_llm=lambda p: "X is Y [a.pdf p.3]",
              judge=lambda p: True,
              rewrite=lambda q, h: q,
+             step_back=lambda q: q,
              web_search=lambda q: [{"title": "t", "url": "u", "text": "web says Z"}],
              k=8, threshold=0.35)
     d.update(over); return GraphDeps(**d)
@@ -347,6 +357,21 @@ def test_follow_up_is_rewritten_before_retrieval():
         {"question": "why?", "history": [{"role": "user", "content": "what is X?"}], "attempts": 0})
     assert seen["q"] == "what is X and why does it hold?"
 
+def test_step_back_retrieves_both_queries_and_merges():
+    seen = []
+    def retrieve(q, k):
+        seen.append(q)
+        return [{"text": "ctx for " + q, "source": "a.pdf", "page": 1, "score": 0.9}]
+    out = build_graph(_deps(retrieve=retrieve, step_back=lambda q: "general: " + q)).invoke(
+        {"question": "q", "history": [], "attempts": 0})
+    assert seen == ["q", "general: q"]
+    assert out["source"] == "slides"
+
+def test_step_back_failure_does_not_block_answer():
+    def boom(q): raise RuntimeError("timeout")
+    out = build_graph(_deps(step_back=boom)).invoke({"question": "q", "history": [], "attempts": 0})
+    assert out["source"] == "slides"
+
 def test_both_paths_fail_gives_labelled_refusal():
     d = _deps(retrieve=lambda q, k: [], web_search=lambda q: [])
     out = build_graph(d).invoke({"question": "q", "history": [], "attempts": 0})
@@ -361,7 +386,7 @@ Expected: FAIL, `build_graph` not defined
 
 - [ ] **Step 3: Implement the graph**
 
-`StateGraph(ChatState)`: `rewrite → route → retrieve → (web | generate) → judge_hallucination → (regenerate once | judge_adequacy) → (web | done)`. `regenerate` fails once more → web. `web` with no results → `give_up`. Prompts include the `[deck.pdf p.N]` convention and forbid claims not in context. Judge prompts end with "Answer only YES or NO." and parse `yes` case-insensitively; anything unparseable counts as pass to avoid loops.
+`StateGraph(ChatState)`: `rewrite → step_back → route → retrieve → (web | generate) → judge_hallucination → (regenerate once | judge_adequacy) → (web | done)`. `retrieve` runs once per query and merges with `merge_results`. `step_back` failures are caught and ignored. `regenerate` fails once more → web. `web` with no results → `give_up`. Prompts include the `[deck.pdf p.N]` convention and forbid claims not in context. The generation prompt names the original question as the one to answer and passes step-back chunks as background. Judge prompts end with "Answer only YES or NO." and parse `yes` case-insensitively; anything unparseable counts as pass to avoid loops.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -535,7 +560,7 @@ git commit -m "feat: startup watcher, model checks and eval script"
 
 ## Self-review
 
-- Spec coverage: ingestion, RAPTOR, adaptive graph, judges, web labelling, follow-ups, API, status, errors, eval each map to a task. Multi-user hosting, OCR, video and CMS sync stay out, as the spec says.
+- Spec coverage: ingestion, RAPTOR, step-back transformation, adaptive graph, judges, web labelling, follow-ups, API, status, errors, eval each map to a task. Multi-user hosting, OCR, video and CMS sync stay out, as the spec says.
 - Types: `ChatState.source` is `"slides" | "web" | "refused"`; API maps `refused` to an `error` event. `Store.search` returns `score`; `is_relevant` reads only `score`. Rewrite returns text, so it is a separate dependency from the yes/no `judge`.
 - Gaps fixed inline: `plan_rebuild` needed an explicit `names` set for stability; both-fail path added in Task 6.
 - Open by design: prompts, threshold tuning, cluster counts, styling.
