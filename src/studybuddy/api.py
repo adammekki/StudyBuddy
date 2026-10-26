@@ -29,7 +29,7 @@ def _event(payload: dict) -> str:
 
 
 def create_app(state: AppState) -> FastAPI:
-    app = FastAPI(title="StudyBuddy")
+    app = FastAPI(title="MaiaGPT")
 
     @app.get("/")
     def index() -> FileResponse:
