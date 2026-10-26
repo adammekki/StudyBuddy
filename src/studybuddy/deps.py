@@ -13,7 +13,7 @@ class Deps:
 
 
 def make_deps(settings: Settings) -> Deps:
-    llm = ChatOllama(model=settings.gen_model, temperature=0)
+    llm = ChatOllama(model=settings.gen_model, temperature=0, reasoning=False)
     judge = ChatOllama(model=settings.judge_model, temperature=0)
     embed = OllamaEmbeddings(model=settings.embed_model)
     return Deps(llm=llm, judge=judge, embed=embed)

@@ -136,7 +136,7 @@ Out-of-scope questions go straight to web, so `route_scope` must be conservative
 
 ### Models
 
-- Generation: `qwen2.5:7b-instruct` (fallback `llama3.1:8b`).
+- Generation: `gemma4:e4b` with reasoning disabled (`reasoning=False`). Fallback: `ministral-3:8b`.
 - Judge, routing, rewriting: `llama3.2:3b`.
 - Embeddings: `nomic-embed-text`.
 - All through `langchain-ollama`, `temperature=0` for judge and rewrite calls.

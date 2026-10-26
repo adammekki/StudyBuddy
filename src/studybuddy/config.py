@@ -7,7 +7,7 @@ import os
 class Settings:
     rag_dir: Path = Path("RAG")
     data_dir: Path = Path("data")
-    gen_model: str = "qwen2.5:7b-instruct"
+    gen_model: str = "gemma4:e4b"
     judge_model: str = "llama3.2:3b"
     embed_model: str = "nomic-embed-text"
     k: int = 8
