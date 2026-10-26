@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Python 3.12 through `uv`. Host Python is 3.14 and must not be used.
-- Models via Ollama only: generator `gemma4:e4b`, judge `llama3.2:3b`, embeddings `nomic-embed-text`. No cloud model APIs.
+- Models via Ollama only: generator `gemma4:e4b`, judge `gemma4:e4b`, reasoning off, embeddings `nomic-embed-text`. No cloud model APIs.
 - Judge and rewrite calls use `temperature=0`.
 - Server binds `127.0.0.1` only.
 - No token streaming. The answer is buffered, judged, then emitted once.

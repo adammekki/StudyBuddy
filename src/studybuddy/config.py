@@ -8,7 +8,7 @@ class Settings:
     rag_dir: Path = Path("RAG")
     data_dir: Path = Path("data")
     gen_model: str = "gemma4:e4b"
-    judge_model: str = "llama3.2:3b"
+    judge_model: str = "gemma4:e4b"
     embed_model: str = "nomic-embed-text"
     k: int = 8
     threshold: float = 0.35

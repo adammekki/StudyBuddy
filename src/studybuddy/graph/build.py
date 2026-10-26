@@ -19,10 +19,11 @@ Keep it short and answerable from course material. Output only the question.
 
 Question: {question}"""
 
-SCOPE_PROMPT = """Is this question about this course's lecture material?
-Answer only YES or NO.
+SCOPE_PROMPT = """Is this question about this course's lecture material? Reply with one word, YES or NO.
 
-Question: {question}"""
+Question: {question}
+
+Verdict:"""
 
 SLIDE_PROMPT = """Answer the question using only the lecture slide excerpts below.
 Cite every claim as [deck.pdf p.N] using the excerpt's own citation.
@@ -40,22 +41,24 @@ REGEN_PROMPT = """{base}
 Your previous answer failed verification: {problem}
 Answer again using only the excerpts. Cite every claim."""
 
-HALLUCINATION_PROMPT = """Is every claim in the answer supported by the excerpts?
-Answer only YES or NO.
+HALLUCINATION_PROMPT = """Are all claims in the answer supported by the excerpts? Reply with one word, YES or NO.
 
 Excerpts:
 {context}
 
 Answer:
-{answer}"""
+{answer}
 
-ADEQUACY_PROMPT = """Does the answer actually answer the question?
-Answer only YES or NO.
+Verdict:"""
+
+ADEQUACY_PROMPT = """Is the answer responsive to the question? Reply with one word, YES or NO.
 
 Question: {question}
 
 Answer:
-{answer}"""
+{answer}
+
+Verdict:"""
 
 WEB_PROMPT = """Answer the question from these WEB results only.
 Say the answer comes from the web. List the source URLs.
