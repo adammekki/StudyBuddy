@@ -240,7 +240,7 @@ document.getElementById('form').addEventListener('submit', async (event) => {
   refreshStatus();
 });
 
-/* Animated ASCII jellyfish, low opacity, behind the chat. */
+/* Animated ASCII sea: jellyfish, fish, bubbles, seaweed. */
 (() => {
   const canvas = document.getElementById('jelly');
   const ctx = canvas.getContext('2d');
@@ -255,6 +255,27 @@ document.getElementById('form').addEventListener('submit', async (event) => {
     phase: i * 2.1,
   }));
 
+  const fish = [
+    { x: 0.15, y: 0.3, speed: 0.000035, dir: 1, phase: 0.4 },
+    { x: 0.75, y: 0.52, speed: 0.000024, dir: -1, phase: 2.1 },
+    { x: 0.45, y: 0.72, speed: 0.000045, dir: 1, phase: 4.3 },
+  ];
+
+  const bubbles = Array.from({ length: 22 }, (_, i) => ({
+    x: Math.random(),
+    y: Math.random(),
+    speed: 0.000012 + Math.random() * 0.000018,
+    wobble: 6 + Math.random() * 14,
+    phase: i * 1.7,
+    glyph: i % 3 === 0 ? 'o' : '°',
+  }));
+
+  const weeds = Array.from({ length: 26 }, (_, i) => ({
+    x: (i + 0.5) / 26,
+    height: 0.06 + ((i * 7) % 5) * 0.012,
+    phase: i * 0.9,
+  }));
+
   function resize() {
     const dpr = Math.min(devicePixelRatio || 1, 2);
     width = innerWidth;
@@ -266,6 +287,7 @@ document.getElementById('form').addEventListener('submit', async (event) => {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.font = '13px ui-monospace, SFMono-Regular, Menlo, monospace';
     ctx.textAlign = 'center';
+    ctx.fillStyle = '#9ad7ef';
   }
 
   function drawJelly(j, t) {
@@ -277,19 +299,14 @@ document.getElementById('form').addEventListener('submit', async (event) => {
     const rx = j.r * (1 + Math.sin(t * 0.0016 + j.phase) * 0.06);
     const ry = j.r * 0.62;
 
-    ctx.fillStyle = '#9ad7ef';
-
-    // bell outline: dome of ASCII characters
     for (let a = 0; a <= Math.PI; a += 0.075) {
       const x = cx + Math.cos(a) * rx;
       const y = cy + bob - Math.sin(a) * ry;
       ctx.fillText(Math.sin(a) > 0.6 ? '=' : '-', x, y);
     }
-    // bell rim
     for (let x = -rx; x <= rx; x += 11) {
       ctx.fillText('.', cx + x, cy + bob + 1);
     }
-    // tentacles: wavy lines of punctuation
     for (let i = 0; i < 5; i++) {
       const offset = -rx * 0.75 + (i * rx * 1.5) / 4;
       for (let k = 1; k <= 7; k++) {
@@ -299,23 +316,55 @@ document.getElementById('form').addEventListener('submit', async (event) => {
     }
   }
 
-  function frame(t) {
+  function drawFish(f, t) {
+    const travel = ((f.x + t * f.speed * f.dir) % 1.2 + 1.2) % 1.2 - 0.1;
+    const cx = travel * width;
+    const cy = f.y * height + Math.sin(t * 0.0009 + f.phase) * 10;
+    ctx.fillText(f.dir > 0 ? '><>' : '<><', cx, cy);
+  }
+
+  function drawBubbles(t) {
+    bubbles.forEach((b) => {
+      const y = ((b.y - t * b.speed) % 1 + 1) % 1;
+      const x = b.x * width + Math.sin(t * 0.0011 + b.phase) * b.wobble;
+      ctx.globalAlpha = Math.min(1, Math.max(0, y * 2.2));
+      ctx.fillText(b.glyph, x, y * height);
+      ctx.globalAlpha = 1;
+    });
+  }
+
+  function drawSeaweed(t) {
+    weeds.forEach((w) => {
+      const baseX = w.x * width;
+      const baseY = height - 8;
+      const chars = Math.round(height * w.height / 12);
+      for (let k = 0; k < chars; k++) {
+        const sway = Math.sin(t * 0.0012 + w.phase + k * 0.45) * (k * 0.8);
+        const glyph = k % 4 === 0 ? '(' : k % 4 === 1 ? ')' : k % 4 === 2 ? '|' : '{';
+        ctx.fillText(glyph, baseX + sway, baseY - k * 12);
+      }
+    });
+  }
+
+  function drawScene(t) {
     ctx.clearRect(0, 0, width, height);
+    drawSeaweed(t);
+    drawBubbles(t);
+    fish.forEach((f) => drawFish(f, t));
     jellies.forEach((j) => drawJelly(j, t));
+  }
+
+  function frame(t) {
+    drawScene(t);
     requestAnimationFrame(frame);
   }
 
   resize();
   addEventListener('resize', resize);
   if (reduce.matches) {
-    requestAnimationFrame(frame0);
+    requestAnimationFrame(() => drawScene(1000));
   } else {
     requestAnimationFrame(frame);
-  }
-
-  function frame0(t) {
-    ctx.clearRect(0, 0, width, height);
-    jellies.forEach((j) => drawJelly(j, 1000));
   }
 })();
 
