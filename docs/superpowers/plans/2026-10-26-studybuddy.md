@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Python 3.12 through `uv`. Host Python is 3.14 and must not be used.
-- Models via Ollama only: generator `qwen2.5:7b-instruct`, judge `llama3.2:3b`, embeddings `nomic-embed-text`. No cloud model APIs.
+- Models via Ollama only: generator `gemma4:e4b`, judge `gemma4:e4b`, reasoning off, embeddings `nomic-embed-text`. No cloud model APIs.
 - Judge and rewrite calls use `temperature=0`.
 - Server binds `127.0.0.1` only.
 - No token streaming. The answer is buffered, judged, then emitted once.
@@ -519,8 +519,8 @@ git commit -m "feat: fastapi chat endpoints and localhost chat page"
 def test_model_check_reports_missing_model(monkeypatch):
     monkeypatch.setattr(main, "list_models", lambda: ["other:latest"])
     with pytest.raises(RuntimeError) as e:
-        main.check_models(["qwen2.5:7b-instruct"])
-    assert "ollama pull qwen2.5:7b-instruct" in str(e.value)
+        main.check_models(["gemma4:e4b"])
+    assert "ollama pull gemma4:e4b" in str(e.value)
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -540,7 +540,7 @@ Expected: all PASS
 - [ ] **Step 5: Real smoke test**
 
 ```bash
-ollama pull qwen2.5:7b-instruct && ollama pull llama3.2:3b && ollama pull nomic-embed-text
+ollama pull gemma4:e4b && ollama pull llama3.2:3b && ollama pull nomic-embed-text
 mkdir -p RAG
 # copy your lecture PDFs into RAG/
 uv run python -m studybuddy.cli index
