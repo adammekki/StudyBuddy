@@ -47,6 +47,20 @@ uv run python -m studybuddy.cli ask "question"  # one question in the terminal
 uv run pytest -q                                # test suite
 ```
 
+## Trace the graph with LangSmith
+
+LangSmith is hosted. Turning it on uploads each question, the slide excerpts and captions retrieved for it, the prompts sent to the model, and the answers, to LangChain's servers. Do not enable it on material you cannot share.
+
+```bash
+cp .env.example .env
+# paste your key from https://smith.langchain.com into LANGSMITH_API_KEY
+uv run python -m studybuddy.main
+```
+
+Then open your project at smith.langchain.com. Every chat turn appears as a trace: `rewrite → step_back → route → retrieve → generate → judge_hallucination → judge_adequacy`, with inputs, outputs, retrieved chunks and timings per node.
+
+`.env` is read automatically and is git-ignored. To keep the trace shape without the content, set `LANGSMITH_HIDE_INPUTS=true` and `LANGSMITH_HIDE_OUTPUTS=true`. Unset `LANGSMITH_TRACING` to turn tracing off.
+
 ## Layout
 
 - `RAG/` — put your slide PDFs here (git-ignored)

@@ -26,9 +26,8 @@ SCOPE_PROMPT = """Is this question about this course's lecture material? Reply w
 Question: {question}
 
 Verdict:"""
-
+# Cite every claim as [deck.pdf p.N] using the excerpt's own citation.
 SLIDE_PROMPT = """Answer the question using only the lecture slide excerpts below.
-Cite every claim as [deck.pdf p.N] using the excerpt's own citation.
 If the excerpts do not support an answer, reply exactly: NOT IN THE SLIDES.
 
 Background question: {step_back}

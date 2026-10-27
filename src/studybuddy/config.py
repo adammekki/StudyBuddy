@@ -2,6 +2,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import os
 
+from dotenv import load_dotenv
+
 
 @dataclass
 class Settings:
@@ -17,6 +19,7 @@ class Settings:
 
 
 def load_settings() -> Settings:
+    load_dotenv(dotenv_path=Path.cwd() / ".env", override=False)
     rag_dir = Path(os.environ.get("STUDYBUDDY_RAG_DIR", "RAG"))
     data_dir = Path(os.environ.get("STUDYBUDDY_DATA_DIR", "data"))
     settings = Settings(rag_dir=rag_dir, data_dir=data_dir)
