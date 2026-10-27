@@ -2,6 +2,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Callable, Iterator
+import time
 
 from langgraph.graph import END, StateGraph
 
@@ -123,6 +124,21 @@ def _history_text(history: list[dict]) -> str:
     return "\n".join(f"{turn['role']}: {turn['content']}" for turn in history[-6:])
 
 
+def _log(name: str, started: float, detail: str = "") -> None:
+    elapsed = (time.perf_counter() - started) * 1000
+    print(f"[{name}] {elapsed:.0f}ms {detail}".rstrip(), flush=True)
+
+
+def _traced(name: str, fn, describe=lambda out: ""):
+    def run(state: ChatState) -> dict:
+        started = time.perf_counter()
+        out = fn(state)
+        _log(name, started, describe(out))
+        return out
+
+    return run
+
+
 def build_graph(d: GraphDeps):
     graph = StateGraph(ChatState)
 
@@ -176,38 +192,75 @@ def build_graph(d: GraphDeps):
         return {"answer": f"{WEB_LABEL}:\n{answer}", "source": "web"}
 
     def after_retrieve(state: ChatState) -> str:
-        return "generate" if is_relevant(state["chunks"], d.threshold) else "web"
+        started = time.perf_counter()
+        ok = is_relevant(state["chunks"], d.threshold)
+        best = max((c["score"] for c in state["chunks"]), default=0.0)
+        _log("grade_relevance", started, f"top={best:.2f} -> {'generate' if ok else 'web'}")
+        return "generate" if ok else "web"
 
     def after_generate(state: ChatState) -> str:
         context = format_context(state["chunks"], d.k)
+        started = time.perf_counter()
         supported = d.judge(
             HALLUCINATION_PROMPT.format(context=context, answer=state["answer"])
         )
         if not supported:
-            if state.get("attempts", 0) < 1:
-                return "regenerate"
-            return "web"
+            _log("check_hallucination", started, "unsupported")
+            decision = "regenerate" if state.get("attempts", 0) < 1 else "web"
+            print(f"[verify] -> {decision}", flush=True)
+            return decision
         adequate = d.judge(
             ADEQUACY_PROMPT.format(question=state["question"], answer=state["answer"])
         )
+        _log(
+            "check_adequacy",
+            started,
+            f"supported, {'adequate' if adequate else 'inadequate'}",
+        )
+        print(f"[verify] -> {'ok' if adequate else 'web'}", flush=True)
         return "ok" if adequate else "web"
 
     def regenerate(state: ChatState) -> dict:
         _emit({"type": "reset"})  # the rejected answer must not stay on screen
         return {"attempts": state.get("attempts", 0) + 1}
 
-    graph.add_node("rewrite", rewrite)
-    graph.add_node("step_back", step_back)
-    graph.add_node("retrieve", retrieve)
-    graph.add_node("generate", generate)
-    graph.add_node("regenerate", regenerate)
-    graph.add_node("web", web)
+    graph.add_node(
+        "rewrite",
+        _traced("rewrite", rewrite, lambda o: f"standalone={o['standalone'][:70]!r}"),
+    )
+    graph.add_node(
+        "step_back",
+        _traced("step_back", step_back, lambda o: f"general={o['step_back'][:70]!r}"),
+    )
+    graph.add_node(
+        "retrieve",
+        _traced("retrieve", retrieve, lambda o: f"{len(o['chunks'])} chunks"),
+    )
+    graph.add_node(
+        "generate",
+        _traced(
+            "generate",
+            generate,
+            lambda o: f"{len(o['answer'])} chars via {o['source']}",
+        ),
+    )
+    graph.add_node(
+        "regenerate",
+        _traced("regenerate", regenerate, lambda o: f"attempt {o['attempts']}"),
+    )
+    graph.add_node("web", _traced("web", web, lambda o: o["source"]))
+
+    def route(state: ChatState) -> str:
+        started = time.perf_counter()
+        in_scope = bool(d.judge(SCOPE_PROMPT.format(question=state["standalone"])))
+        _log("route", started, "in course" if in_scope else "out of course -> web")
+        return "retrieve" if in_scope else "web"
 
     graph.set_entry_point("rewrite")
     graph.add_edge("rewrite", "step_back")
     graph.add_conditional_edges(
         "step_back",
-        lambda s: "retrieve" if d.judge(SCOPE_PROMPT.format(question=s["standalone"])) else "web",
+        route,
         {"retrieve": "retrieve", "web": "web"},
     )
     graph.add_conditional_edges(

@@ -137,3 +137,10 @@ def test_regeneration_happens_exactly_once():
     )
     assert calls["slide"] == 2
     assert calls["web"] == 1
+
+
+def test_each_node_logs_a_line_to_stdout(capsys):
+    build_graph(_deps()).invoke({"question": "what is X?", "history": [], "attempts": 0})
+    out = capsys.readouterr().out
+    for name in ("rewrite", "step_back", "route", "retrieve", "generate"):
+        assert f"[{name}]" in out
